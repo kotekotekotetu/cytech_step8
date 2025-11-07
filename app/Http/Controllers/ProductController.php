@@ -23,6 +23,7 @@ class ProductController extends Controller
     {
         $query = Product::with('company');
 
+        //検索条件
         if ($request->filled('keyword')) {
             $query->where('product_name', 'like', '%' . $request->keyword . '%');
         }
@@ -31,12 +32,36 @@ class ProductController extends Controller
             $query->where('company_id', $request->company_id);
         }
 
-        $products = $query->paginate(10);
+        if ($request->filled('min_price')) {
+            $query->where('price', '>=', $request->min_price);
+        }
+
+        if ($request->filled('max_price')) {
+            $query->where('price', '<=', $request->max_price);
+        }
+
+        //ソート処理追加
+        $sort = $request->input('sort', 'id'); // デフォルトはid
+        $direction = $request->input('direction', 'asc'); // デフォルト昇順
+
+        //ホワイトリスト
+        $allowedSorts = ['id', 'product_name', 'price', 'stock'];
+        if (!in_array($sort, $allowedSorts)) {
+            $sort = 'id';
+        }
+
+        $query->orderBy($sort, $direction);
+
+        $products = $query->paginate(10)->appends($request->all());
         $companies = Company::all();
+
+        //Ajaxの場合は部分ビューを返す
+        if ($request->ajax()) {
+            return view('products.table', compact('products'))->render();
+        }
 
         return view('products.index', compact('products', 'companies'));
     }
-
 
 
     /**
@@ -158,16 +183,23 @@ class ProductController extends Controller
             DB::transaction(function () use ($id) {
                 $product = Product::findOrFail($id);
 
+                // 画像が存在すれば削除
                 if ($product->img_path && Storage::disk('public')->exists($product->img_path)) {
                     Storage::disk('public')->delete($product->img_path);
                 }
 
                 $product->delete();
             });
-        } catch (\Exception $e) {
-            return back()->with('error', '削除に失敗しました');
-        }
 
-        return redirect()->route('products.index')->with('success', '商品を削除しました');
+            //Ajax用のJSONレスポンスを常に返す
+            return response()->json(['success' => true]);
+        } catch (\Exception $e) {
+            //エラー時もJSONで返す
+            return response()->json([
+                'success' => false,
+                'message' => '削除に失敗しました',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
     }
 }
